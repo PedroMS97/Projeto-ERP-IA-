@@ -1,0 +1,112 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Company {
+  id                 String              @id @default(uuid())
+  name               String
+  cnpj               String              @unique
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  users              User[]
+  clients            Client[]
+  leads              Lead[]
+  products           Product[]
+  inventoryMovements InventoryMovement[]
+}
+
+enum Role {
+  ADMIN
+  VENDEDOR
+  GERENTE
+}
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      Role     @default(VENDEDOR)
+  companyId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company   Company  @relation(fields: [companyId], references: [id])
+}
+
+model Client {
+  id            String   @id @default(uuid())
+  name          String
+  email         String?
+  phone         String?
+  cnpj          String?
+  neighborhood  String?
+  status        String   @default("ACTIVE")
+  companyId     String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  company       Company  @relation(fields: [companyId], references: [id])
+  deals         Deal[]
+}
+
+model Lead {
+  id        String   @id @default(uuid())
+  name      String
+  email     String?
+  phone     String?
+  origin    String   // Instagram, WhatsApp, Indicação
+  status    String   @default("NEW")
+  companyId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company   Company  @relation(fields: [companyId], references: [id])
+}
+
+model Deal {
+  id        String   @id @default(uuid())
+  title     String
+  value     Float
+  stage     String   // "NEW", "PROPOSAL", "WON", "LOST"
+  clientId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  client    Client   @relation(fields: [clientId], references: [id])
+}
+
+model Product {
+  id                 String              @id @default(uuid())
+  name               String
+  size               String?             // ex: "P", "M", "G", "GG", "Único"
+  description        String?
+  price              Float
+  stock              Int                 @default(0)
+  imageUrl           String?
+  companyId          String
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  company            Company             @relation(fields: [companyId], references: [id])
+  inventoryMovements InventoryMovement[]
+}
+
+model InventoryMovement {
+  id           String   @id @default(uuid())
+  productId    String
+  type         String   // "ENTRADA" | "SAIDA"
+  quantity     Int
+  source       String   @default("MANUAL") // "WHATSAPP" | "MANUAL"
+  whatsappJid  String?  // número que enviou a mensagem (ex: 5511999999999@s.whatsapp.net)
+  companyId    String
+  createdAt    DateTime @default(now())
+
+  product      Product  @relation(fields: [productId], references: [id])
+  company      Company  @relation(fields: [companyId], references: [id])
+}
