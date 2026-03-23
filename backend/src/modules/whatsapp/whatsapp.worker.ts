@@ -18,13 +18,14 @@ export function setSendFunction(fn: (jid: string, text: string) => Promise<void>
 
 async function safeSend(jid: string, text: string) {
   if (!sendFn) {
-    console.warn('[Worker] sendFn not set — cannot reply to', jid);
+    // LGPD: não logar jid (número de telefone)
+    console.warn('[Worker] sendFn não configurado — não foi possível responder.');
     return;
   }
   try {
     await sendFn(jid, text);
   } catch (err) {
-    console.error('[Worker] Failed to send message:', err);
+    console.error('[Worker] Falha ao enviar mensagem:', (err as Error).message);
   }
 }
 
@@ -32,17 +33,21 @@ export function startWorker() {
   const worker = new Worker<WhatsAppMessageJob>(
     QUEUE_NAME,
     async (job) => {
-      const { jid, text, pushName, companyId } = job.data;
-      console.log(`[Worker] Processing from \${pushName} (\${jid}): "\${text}"`);
+      const { jid, text, companyId } = job.data;
+      // LGPD: não logar jid (telefone), pushName (nome) nem conteúdo da mensagem
+      console.log(`[Worker] Processando job ${job.id}`);
 
       if (!companyId) {
         await safeSend(jid, '⚠️ Sistema não configurado. Defina WHATSAPP_DEFAULT_COMPANY_ID no servidor.');
         return;
       }
 
+      // Limitar tamanho do texto para evitar DoS / abuso de IA
+      const safeText = text.slice(0, 500);
+
       // 1. Send to AI
-      const cmd = await parseCommand(text);
-      console.log(`[Worker] AI Action: \${cmd.action} (Confidence: \${cmd.confidence})`);
+      const cmd = await parseCommand(safeText);
+      console.log(`[Worker] AI Action: ${cmd.action} (Confidence: ${cmd.confidence})`);
 
       // 2. Decide response based on Action
       let finalReply = cmd.message; // Default fallback to AI's natural reply
@@ -70,7 +75,7 @@ export function startWorker() {
             case 'CHECK_STOCK':
               if (cmd.data?.produto) {
                 const res = await InventoryService.queryStock(companyId, cmd.data.produto, cmd.data.tamanho);
-                finalReply = res.message; // Override feeling natural here, we want exact stock facts
+                finalReply = res.message;
               }
               break;
 
@@ -79,7 +84,6 @@ export function startWorker() {
             case 'TOP_PRODUCTS':
             case 'LOW_STOCK_ALERT':
             case 'SUPPLIER_ORDER':
-              // Not implemented in DB yet, but AI answered properly!
               finalReply = cmd.message + '\n\n*(Nota: Essa função financeira/analítica ainda não está conectada ao banco de dados, mas entendi seu comando!)*';
               break;
 
@@ -91,7 +95,7 @@ export function startWorker() {
           }
         }
       } catch (e) {
-        console.error('[Worker] Error executing DB action:', e);
+        console.error('[Worker] Erro ao executar ação no banco:', (e as Error).message);
         finalReply = '❌ Ocorreu um erro interno ao processar sua solicitação no sistema.';
       }
 
@@ -103,9 +107,9 @@ export function startWorker() {
     },
   );
 
-  worker.on('completed', (job) => console.log(`[Worker] Job \${job.id} done`));
-  worker.on('failed', (job, err) => console.error(`[Worker] Job \${job?.id} failed:`, err?.message));
+  worker.on('completed', (_job) => console.log('[Worker] Job concluído.'));
+  worker.on('failed', (_job, err) => console.error('[Worker] Job falhou:', err?.message));
 
-  console.log('[BullMQ] Worker started ✅');
+  console.log('[BullMQ] Worker started');
   return worker;
 }

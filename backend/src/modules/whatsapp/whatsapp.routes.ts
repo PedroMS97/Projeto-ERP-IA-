@@ -13,8 +13,8 @@ import { authenticate } from '../../middlewares/authMiddleware';
 export function createWhatsAppRouter(adapter: WhatsAppAdapter): Router {
   const router = Router();
 
-  // GET /api/whatsapp/qrcode/image — public endpoint, renders QR as HTML page
-  router.get('/qrcode/image', async (_req: Request, res: Response) => {
+  // GET /api/whatsapp/qrcode/image — restrito a usuários autenticados
+  router.get('/qrcode/image', authenticate, async (_req: Request, res: Response) => {
     const qr = adapter.getQRCode();
 
     if (!qr) {

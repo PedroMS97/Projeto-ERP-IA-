@@ -7,20 +7,78 @@ import path from 'path';
 
 dotenv.config();
 
+// Validação de variáveis de ambiente obrigatórias
+const REQUIRED_ENV_VARS = ['DATABASE_URL', 'JWT_SECRET', 'JWT_REFRESH_SECRET'];
+for (const envVar of REQUIRED_ENV_VARS) {
+  if (!process.env[envVar]) {
+    console.error(`[FATAL] Variável de ambiente obrigatória ausente: ${envVar}`);
+    process.exit(1);
+  }
+}
+
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Security Middlewares
-app.use(helmet());
-app.use(cors());
+// Origens permitidas — configure via env em produção
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+  : ['http://localhost:5173', 'http://localhost:3000'];
 
-// Rate Limiting
+// Security Middlewares
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'"],
+        frameSrc: ["'none'"],
+        objectSrc: ["'none'"],
+      },
+    },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    hsts: { maxAge: 31536000, includeSubDomains: true },
+  }),
+);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Permite requests sem origem (ex: ferramentas CLI/mobile em dev)
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Bloqueado por CORS'));
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  }),
+);
+
+// Rate Limiting geral
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Muitas requisições. Tente novamente em alguns minutos.' },
 });
 app.use(limiter);
-app.use(express.json());
+
+// Rate Limiting estrito para autenticação (brute-force protection)
+export const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Muitas tentativas de login. Tente novamente em 15 minutos.' },
+});
+
+app.use(express.json({ limit: '1mb' }));
 
 // ── Existing routes ──────────────────────────────────────────────────────────
 import authRoutes from './modules/auth/auth.routes';

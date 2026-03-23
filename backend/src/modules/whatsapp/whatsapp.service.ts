@@ -21,12 +21,21 @@ export interface InventoryResult {
  * Finds a product by name (case-insensitive, partial match) and optional size.
  * Returns the first match within the given company.
  */
+const MAX_PRODUCT_NAME_LENGTH = 200;
+const MAX_SIZE_LENGTH = 50;
+
 async function findProduct(companyId: string, productName: string, size?: string) {
+  // Limitar tamanho dos inputs para evitar DoS via buscas excessivas
+  const safeName = productName.slice(0, MAX_PRODUCT_NAME_LENGTH).trim();
+  const safeSize = size ? size.slice(0, MAX_SIZE_LENGTH).trim() : undefined;
+
+  if (!safeName) return null;
+
   return prisma.product.findFirst({
     where: {
       companyId,
-      name: { contains: productName, mode: 'insensitive' },
-      ...(size ? { size: { equals: size, mode: 'insensitive' } } : {}),
+      name: { contains: safeName, mode: 'insensitive' },
+      ...(safeSize ? { size: { equals: safeSize, mode: 'insensitive' } } : {}),
     },
   });
 }
