@@ -107,17 +107,16 @@ export async function processExit(
     };
   }
 
-  if (product.stock < quantity) {
-    return {
-      success: false,
-      message:
-        `❌ *Estoque insuficiente!*\n` +
-        `📦 ${product.name}${product.size ? ` (${product.size})` : ''}\n` +
-        `🗃️ Disponível: *${product.stock}* | Solicitado: *${quantity}*`,
-    };
-  }
-
+  // A verificação de estoque acontece DENTRO da transação para evitar race condition.
+  // Se duas saídas chegarem simultaneamente, apenas uma terá estoque suficiente.
+  let insufficientStock = false;
   const updated = await prisma.$transaction(async (tx) => {
+    const current = await tx.product.findUnique({ where: { id: product.id }, select: { stock: true } });
+    if (!current || current.stock < quantity) {
+      insufficientStock = true;
+      return null;
+    }
+
     const updatedProduct = await tx.product.update({
       where: { id: product.id },
       data: { stock: { decrement: quantity } },
@@ -136,6 +135,16 @@ export async function processExit(
 
     return updatedProduct;
   });
+
+  if (insufficientStock || !updated) {
+    return {
+      success: false,
+      message:
+        `❌ *Estoque insuficiente!*\n` +
+        `📦 ${product.name}${product.size ? ` (${product.size})` : ''}\n` +
+        `🗃️ Solicitado: *${quantity}*`,
+    };
+  }
 
   return {
     success: true,

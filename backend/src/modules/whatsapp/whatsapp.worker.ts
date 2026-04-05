@@ -57,20 +57,28 @@ export function startWorker() {
           finalReply = `🤔 Não tenho certeza se entendi direito (Confiança baixa). Pode reescrever de outra forma?`;
         } else {
           switch (cmd.action) {
-            case 'ADD_STOCK':
-              if (cmd.data?.produto && cmd.data?.quantidade) {
-                const res = await InventoryService.processEntry(companyId, cmd.data.produto, cmd.data.quantidade, jid, cmd.data.tamanho);
+            case 'ADD_STOCK': {
+              const qty = parseInt(String(cmd.data?.quantidade), 10);
+              if (cmd.data?.produto && !isNaN(qty) && qty > 0 && qty <= 999_999) {
+                const res = await InventoryService.processEntry(companyId, cmd.data.produto, qty, jid, cmd.data.tamanho);
                 finalReply = cmd.message + '\n\n' + res.message;
+              } else if (cmd.data?.produto) {
+                finalReply = `⚠️ Quantidade inválida. Informe um número inteiro entre 1 e 999.999.`;
               }
               break;
+            }
 
             case 'REMOVE_STOCK':
-            case 'ADD_SALE':
-              if (cmd.data?.produto && cmd.data?.quantidade) {
-                const res = await InventoryService.processExit(companyId, cmd.data.produto, cmd.data.quantidade, jid, cmd.data.tamanho);
+            case 'ADD_SALE': {
+              const qty = parseInt(String(cmd.data?.quantidade), 10);
+              if (cmd.data?.produto && !isNaN(qty) && qty > 0 && qty <= 999_999) {
+                const res = await InventoryService.processExit(companyId, cmd.data.produto, qty, jid, cmd.data.tamanho);
                 finalReply = cmd.message + '\n\n' + res.message;
+              } else if (cmd.data?.produto) {
+                finalReply = `⚠️ Quantidade inválida. Informe um número inteiro entre 1 e 999.999.`;
               }
               break;
+            }
 
             case 'CHECK_STOCK':
               if (cmd.data?.produto) {

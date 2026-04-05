@@ -1,12 +1,39 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { prisma } from '../../config/prisma';
 import { AuthRequest } from '../../middlewares/authMiddleware';
+import { revokeToken, isTokenRevoked } from '../../config/redis';
 
 // ── Validações simples (sem dependência extra) ─────────────────────────────────
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const CNPJ_REGEX = /^\d{14}$/;
+const CNPJ_DIGITS_REGEX = /^\d{14}$/;
+
+/**
+ * Valida CNPJ com algoritmo de dígitos verificadores (módulo 11).
+ * Rejeita sequências repetidas (ex: 00000000000000).
+ */
+function isValidCNPJ(cnpj: string): boolean {
+  const digits = cnpj.replace(/\D/g, '');
+  if (!CNPJ_DIGITS_REGEX.test(digits)) return false;
+  if (/^(\d)\1+$/.test(digits)) return false; // todos os dígitos iguais
+
+  const calcDigit = (d: string, length: number): number => {
+    let sum = 0;
+    let pos = length - 7;
+    for (let i = length; i >= 1; i--) {
+      sum += parseInt(d[length - i]) * pos--;
+      if (pos < 2) pos = 9;
+    }
+    const rem = sum % 11;
+    return rem < 2 ? 0 : 11 - rem;
+  };
+
+  if (calcDigit(digits, 12) !== parseInt(digits[12])) return false;
+  if (calcDigit(digits, 13) !== parseInt(digits[13])) return false;
+  return true;
+}
 
 function validateRegisterInput(data: Record<string, unknown>): string | null {
   const { name, email, password, companyName, cnpj } = data;
@@ -22,8 +49,10 @@ function validateRegisterInput(data: Record<string, unknown>): string | null {
   if (!companyName || typeof companyName !== 'string' || companyName.trim().length < 2 || companyName.length > 150) {
     return 'Nome da empresa deve ter entre 2 e 150 caracteres.';
   }
-  if (cnpj !== undefined && (typeof cnpj !== 'string' || !CNPJ_REGEX.test(cnpj.replace(/\D/g, '')))) {
-    return 'CNPJ inválido (deve conter 14 dígitos).';
+  if (cnpj !== undefined) {
+    if (typeof cnpj !== 'string' || !isValidCNPJ(cnpj)) {
+      return 'CNPJ inválido.';
+    }
   }
   return null;
 }
@@ -46,18 +75,22 @@ function signAccessToken(payload: { id: string; role: string; companyId: string 
   });
 }
 
-function signRefreshToken(userId: string) {
-  return jwt.sign({ id: userId }, process.env.JWT_REFRESH_SECRET as string, {
+const REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 dias em segundos
+
+function signRefreshToken(userId: string): { token: string; jti: string } {
+  const jti = crypto.randomUUID();
+  const token = jwt.sign({ id: userId, jti }, process.env.JWT_REFRESH_SECRET as string, {
     expiresIn: '7d',
     algorithm: 'HS256',
   });
+  return { token, jti };
 }
 
 const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
   sameSite: 'strict' as const,
-  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 dias
+  maxAge: REFRESH_TOKEN_TTL_SECONDS * 1000,
 };
 
 export const register = async (req: Request, res: Response): Promise<void> => {
@@ -129,13 +162,13 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const token = signAccessToken({ id: user.id, role: user.role, companyId: user.companyId });
-    const refreshToken = signRefreshToken(user.id);
+    const accessToken = signAccessToken({ id: user.id, role: user.role, companyId: user.companyId });
+    const { token: refreshToken } = signRefreshToken(user.id);
 
     res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS);
 
     res.json({
-      token,
+      token: accessToken,
       user: { id: user.id, name: user.name, email: user.email, role: user.role, companyId: user.companyId },
     });
   } catch {
@@ -145,19 +178,25 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
 export const refreshToken = async (req: Request, res: Response): Promise<void> => {
   try {
-    const token = req.cookies?.refreshToken as string | undefined;
-    if (!token) {
+    const rawToken = req.cookies?.refreshToken as string | undefined;
+    if (!rawToken) {
       res.status(401).json({ message: 'Não autenticado.' });
       return;
     }
 
-    let payload: { id: string };
+    let payload: { id: string; jti: string };
     try {
-      payload = jwt.verify(token, process.env.JWT_REFRESH_SECRET as string, {
+      payload = jwt.verify(rawToken, process.env.JWT_REFRESH_SECRET as string, {
         algorithms: ['HS256'],
-      }) as { id: string };
+      }) as { id: string; jti: string };
     } catch {
       res.status(401).json({ message: 'Sessão expirada. Faça login novamente.' });
+      return;
+    }
+
+    // Verifica se o token foi revogado (logout ou rotação anterior)
+    if (!payload.jti || await isTokenRevoked(payload.jti)) {
+      res.status(401).json({ message: 'Sessão inválida. Faça login novamente.' });
       return;
     }
 
@@ -167,23 +206,41 @@ export const refreshToken = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
+    // Revoga o token atual antes de emitir o novo (rotação segura)
+    const decoded = jwt.decode(rawToken) as { exp?: number } | null;
+    const remainingTtl = decoded?.exp ? Math.max(decoded.exp - Math.floor(Date.now() / 1000), 1) : REFRESH_TOKEN_TTL_SECONDS;
+    await revokeToken(payload.jti, remainingTtl);
+
     const newAccessToken = signAccessToken({ id: user.id, role: user.role, companyId: user.companyId });
-    const newRefreshToken = signRefreshToken(user.id);
+    const { token: newRefreshToken } = signRefreshToken(user.id);
 
-    // Rotaciona o refresh token
     res.cookie('refreshToken', newRefreshToken, REFRESH_COOKIE_OPTIONS);
-
     res.json({ token: newAccessToken });
   } catch {
     res.status(500).json({ message: 'Erro interno no servidor.' });
   }
 };
 
-export const logout = async (_req: AuthRequest, res: Response): Promise<void> => {
-  res.clearCookie('refreshToken', {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-  });
-  res.json({ message: 'Logout realizado com sucesso.' });
+export const logout = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const rawToken = req.cookies?.refreshToken as string | undefined;
+    if (rawToken) {
+      try {
+        const payload = jwt.decode(rawToken) as { jti?: string; exp?: number } | null;
+        if (payload?.jti) {
+          const remainingTtl = payload.exp ? Math.max(payload.exp - Math.floor(Date.now() / 1000), 1) : REFRESH_TOKEN_TTL_SECONDS;
+          await revokeToken(payload.jti, remainingTtl);
+        }
+      } catch {
+        // Ignora erros ao revogar — o cookie será limpo de qualquer forma
+      }
+    }
+  } finally {
+    res.clearCookie('refreshToken', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+    });
+    res.json({ message: 'Logout realizado com sucesso.' });
+  }
 };

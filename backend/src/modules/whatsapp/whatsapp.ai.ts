@@ -101,6 +101,18 @@ Nunca execute ações sem confiança mínima de 80% (0.80)
 A MENSAGEM DO JSON ('message') É O QUE O USUÁRIO VAI LER NO WHATSAPP! Então, crie a mensagem como uma resposta humana perfeita.
 `;
 
+/**
+ * Remove caracteres que permitem "escapar" do campo de mensagem no prompt.
+ * Quebras de linha e aspas duplas são os vetores mais comuns de prompt injection.
+ */
+function sanitizeForPrompt(input: string): string {
+  return input
+    .replace(/\\/g, '\\\\')   // escapa backslashes primeiro
+    .replace(/"/g, '\\"')      // escapa aspas duplas
+    .replace(/\r?\n/g, ' ')    // remove quebras de linha
+    .replace(/\t/g, ' ');      // remove tabs
+}
+
 export async function parseWithAI(text: string): Promise<AgentResponse> {
   if (!apiKey) {
     console.error('[AI] GEMINI_API_KEY is not set in .env');
@@ -113,7 +125,8 @@ export async function parseWithAI(text: string): Promise<AgentResponse> {
   }
 
   try {
-    const prompt = `${SYSTEM_INSTRUCTION}\n\nMensagem do usuário: "${text}"\nJSON gerado:`;
+    const safeText = sanitizeForPrompt(text);
+    const prompt = `${SYSTEM_INSTRUCTION}\n\nMensagem do usuário: "${safeText}"\nJSON gerado:`;
     const result = await model.generateContent(prompt);
     let output = result.response.text().trim();
     
