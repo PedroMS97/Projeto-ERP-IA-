@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import path from 'path';
 
@@ -12,6 +13,14 @@ const REQUIRED_ENV_VARS = ['DATABASE_URL', 'JWT_SECRET', 'JWT_REFRESH_SECRET'];
 for (const envVar of REQUIRED_ENV_VARS) {
   if (!process.env[envVar]) {
     console.error(`[FATAL] Variável de ambiente obrigatória ausente: ${envVar}`);
+    process.exit(1);
+  }
+}
+
+// Valida força mínima dos secrets JWT (mínimo 32 caracteres)
+for (const secretVar of ['JWT_SECRET', 'JWT_REFRESH_SECRET']) {
+  if ((process.env[secretVar] as string).length < 32) {
+    console.error(`[FATAL] ${secretVar} deve ter no mínimo 32 caracteres.`);
     process.exit(1);
   }
 }
@@ -78,6 +87,7 @@ export const authLimiter = rateLimit({
   message: { message: 'Muitas tentativas de login. Tente novamente em 15 minutos.' },
 });
 
+app.use(cookieParser());
 app.use(express.json({ limit: '1mb' }));
 
 // ── Existing routes ──────────────────────────────────────────────────────────

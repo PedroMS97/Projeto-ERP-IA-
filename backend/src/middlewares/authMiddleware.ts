@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 
 export interface TokenPayload {
   id: string;
-  role: 'ADMIN' | 'VENDEDOR';
+  role: 'ADMIN' | 'VENDEDOR' | 'GERENTE';
   companyId: string;
   iat?: number;
   exp?: number;
@@ -37,7 +37,7 @@ export const authenticate = (req: AuthRequest, res: Response, next: NextFunction
  * Restringe acesso a usuários com uma das roles informadas.
  * Deve ser usado APÓS o middleware `authenticate`.
  */
-export const requireRole = (...roles: Array<'ADMIN' | 'VENDEDOR'>) => {
+export const requireRole = (...roles: Array<'ADMIN' | 'VENDEDOR' | 'GERENTE'>) => {
   return (req: AuthRequest, res: Response, next: NextFunction): void => {
     if (!req.user || !roles.includes(req.user.role)) {
       res.status(403).json({ message: 'Acesso negado. Permissão insuficiente.' });

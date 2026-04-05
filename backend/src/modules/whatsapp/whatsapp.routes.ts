@@ -72,7 +72,8 @@ export function createWhatsAppRouter(adapter: WhatsAppAdapter): Router {
       await adapter.disconnect();
       res.json({ message: 'Disconnected successfully.' });
     } catch (err) {
-      res.status(500).json({ message: 'Failed to disconnect.', error: String(err) });
+      console.error('[WhatsApp] Disconnect error:', (err as Error).message);
+      res.status(500).json({ message: 'Failed to disconnect.' });
     }
   });
 

@@ -41,14 +41,21 @@ function validateClientInput(data: Record<string, unknown>, requireName = true):
   return null;
 }
 
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
+
 export const getClients = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { companyId } = req.user!;
-    const clients = await prisma.client.findMany({
-      where: { companyId },
-      orderBy: { createdAt: 'desc' },
-    });
-    res.json(clients);
+    const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
+    const limit = Math.min(MAX_LIMIT, Math.max(1, parseInt(String(req.query.limit ?? DEFAULT_LIMIT), 10) || DEFAULT_LIMIT));
+    const skip = (page - 1) * limit;
+
+    const [clients, total] = await prisma.$transaction([
+      prisma.client.findMany({ where: { companyId }, orderBy: { createdAt: 'desc' }, skip, take: limit }),
+      prisma.client.count({ where: { companyId } }),
+    ]);
+    res.json({ data: clients, total, page, limit, pages: Math.ceil(total / limit) });
   } catch {
     res.status(500).json({ message: 'Erro ao buscar clientes.' });
   }
